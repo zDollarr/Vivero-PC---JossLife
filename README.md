@@ -1,24 +1,43 @@
 # Vivero PC — JossLife Manager
 
-App de escritorio para gestión de un vivero. Controla el inventario de plantas y productos, genera reportes y maneja acceso por usuario.
+Aplicación de escritorio para la gestión interna de un vivero, desarrollada con Electron, React y TypeScript. Permite administrar el inventario de productos, gestionar usuarios y generar reportes desde una interfaz local orientada al uso administrativo. Este proyecto funciona como la contraparte de escritorio de la app móvil [Proyecto---Rojas](https://github.com/zDollarr/Proyecto---Rojas).
+
+Fue desarrollado como parte de un proyecto académico enfocado en software para una empresa, adaptando la idea principal del vivero a un entorno de escritorio.
 
 ---
 
-## Tecnologias
+## Funcionalidades
 
-- **Electron** — app de escritorio
-- **Vite + React + TypeScript** — frontend
-- **Tailwind CSS** — estilos
-- **Firebase** — auth y base de datos
+- Inicio de sesión con Firebase Authentication
+- Gestión del inventario de productos (agregar, editar y eliminar)
+- Interfaz administrativa con navegación lateral
+- Generación de reportes en PDF mediante `html2pdf.js`
+- Compilación a instalador de Windows con Electron Builder
 
 ---
 
-## Funciones principales
+## Tech Stack
 
-- Login con Firebase Authentication
-- Agregar, editar y eliminar productos del inventario
-- Generación de reportes
-- Sidebar de navegación
+Electron · React · TypeScript · Vite · Tailwind CSS · Firebase · html2pdf.js
+
+---
+
+## Estructura del Proyecto
+
+```text
+electron/             # Proceso principal de Electron
+src/                  # Interfaz construida con React
+├── components/       # Componentes reutilizables
+├── assets/           # Recursos estáticos
+├── App.tsx           # Componente principal
+├── main.tsx          # Punto de entrada de React
+├── firebaseConfig.ts # Configuración de Firebase
+├── App.css           # Estilos generales
+└── index.css         # Estilos base
+build/                # Recursos para empaquetado (íconos, etc.)
+dist-electron/        # Archivos compilados para Electron
+release/              # Instalador generado al compilar
+```
 
 ---
 
@@ -29,23 +48,17 @@ App de escritorio para gestión de un vivero. Controla el inventario de plantas 
 
 ---
 
-## Instalación
+## Instalación y Ejecución
 
 ```bash
-# Clonar el repositorio
 git clone https://github.com/zDollarr/Vivero-PC---JossLife.git
 cd Vivero-PC---JossLife
-
-# Instalar dependencias
 npm install
 ```
 
----
+### Variables de entorno
 
-## Variables de entorno
-
-Antes de correr la app, crea un `.env` en la raíz con tus datos de Firebase.
-Si no tienes proyecto, créalo en https://console.firebase.google.com
+Antes de ejecutar la aplicación, crea un archivo `.env` en la raíz del proyecto con tus credenciales de Firebase:
 
 ```env
 VITE_FIREBASE_API_KEY=
@@ -56,32 +69,37 @@ VITE_FIREBASE_MESSAGING_SENDER_ID=
 VITE_FIREBASE_APP_ID=
 ```
 
-> El `.env` está en `.gitignore`, no se sube al repo.
-
----
-
-## Cómo correrlo
+### Ejecutar en desarrollo
 
 ```bash
-# Modo desarrollo (abre la ventana de Electron)
 npm run dev
+```
 
-# Build — genera el instalador .exe en /release
+### Generar instalador para Windows
+
+```bash
 npm run build
 ```
 
-> **Nota:** si `npm run dev` falla con Electron la primera vez, corre esto antes:
-> ```bash
-> node node_modules/electron/install.js
-> ```
+> **Nota:** `npm run build` genera el instalador en la carpeta `release/`.
+
+> **Nota adicional:** si `npm run dev` falla con Electron la primera vez, ejecuta:
+
+```bash
+node node_modules/electron/install.js
+```
 
 ---
 
-## Estructura
+## Proyecto Relacionado
 
-```
-electron/ → proceso principal
-src/ → interfaz React
-src/components/ → componentes
-build/ → íconos
-```
+La versión móvil de este sistema, orientada al cliente, se encuentra en:
+[Proyecto---Rojas](https://github.com/zDollarr/Proyecto---Rojas)
+
+---
+
+## Autor
+
+**Fernando Santos Gómez**  
+Ingeniería en Sistemas Computacionales –  
+[github.com/zDollarr](https://github.com/zDollarr)
