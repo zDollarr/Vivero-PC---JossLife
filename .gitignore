@@ -24,4 +24,4 @@ out
 *.ntvs*
 *.njsproj
 *.sln
-*.sw?
+*.sw?"release/" 
