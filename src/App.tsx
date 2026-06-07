@@ -1,10 +1,21 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { collection, getDocs, doc, deleteDoc, getDoc } from 'firebase/firestore'
+import {
+  collection,
+  getDocs,
+  doc,
+  deleteDoc,
+  getDoc,
+  addDoc,
+  serverTimestamp,
+} from 'firebase/firestore'
 import { onAuthStateChanged, User, signOut } from 'firebase/auth'
 import { db, auth } from './firebaseConfig'
 import { Sidebar } from './components/Sidebar'
 import { AddProductModal } from './components/AddProductModal'
 import { LoginScreen } from './components/LoginScreen'
+import { MovimientosPanel } from './components/MovimientosPanel'
+
+type Vista = 'inventario' | 'movimientos' | 'reporte' | 'usuarios'
 
 interface Plant {
   id: string
@@ -12,6 +23,15 @@ interface Plant {
   price: number
   category: string
   stock?: number
+}
+
+interface SystemUser {
+  id: string
+  username?: string
+  email?: string
+  role?: string
+  rol?: string
+  createdAt?: unknown
 }
 
 type SortBy =
@@ -34,17 +54,18 @@ function App() {
   const [showModal, setShowModal] = useState(false)
   const [editingProduct, setEditingProduct] = useState<Plant | null>(null)
 
+  const [usersList, setUsersList] = useState<SystemUser[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
+
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('Todas')
 
   const [productToDelete, setProductToDelete] = useState<string | null>(null)
   const [showDeleteSuccess, setShowDeleteSuccess] = useState(false)
 
-  // Estado de conexión a internet
   const [isOnline, setIsOnline] = useState(navigator.onLine)
-
-  // ORDENAMIENTO
   const [sortBy, setSortBy] = useState<SortBy>('none')
+  const [activeView, setActiveView] = useState<Vista>('inventario')
 
   const isMounted = useRef(true)
 
@@ -129,7 +150,10 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (user) fetchPlants()
+    if (user) {
+      fetchPlants()
+      fetchUsers()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
@@ -155,6 +179,32 @@ function App() {
     }
   }
 
+  const fetchUsers = async () => {
+    setUsersLoading(true)
+    try {
+      const querySnapshot = await getDocs(collection(db, 'users'))
+      const loadedUsers = querySnapshot.docs.map((d) => {
+        const data = d.data()
+        return {
+          id: d.id,
+          username: data.username ?? '',
+          email: data.email ?? '',
+          role: data.role ?? '',
+          rol: data.rol ?? '',
+          createdAt: data.createdAt ?? null,
+        } as SystemUser
+      })
+
+      if (isMounted.current) {
+        setUsersList(loadedUsers)
+      }
+    } catch (error) {
+      console.error('Error cargando usuarios:', error)
+    } finally {
+      if (isMounted.current) setUsersLoading(false)
+    }
+  }
+
   const handleOpenCreate = () => {
     setEditingProduct(null)
     setShowModal(true)
@@ -172,10 +222,30 @@ function App() {
 
   const executeDelete = async () => {
     if (!productToDelete) return
+
     const idToDelete = productToDelete
+    const plantToDelete = plants.find((p) => p.id === idToDelete)
 
     setPlants((prev) => prev.filter((p) => p.id !== idToDelete))
     setShowDeleteSuccess(true)
+
+    const currentUser = auth.currentUser
+    const nombreUsuario =
+      currentUser?.displayName ||
+      currentUser?.email?.split('@')[0] ||
+      userName ||
+      'Usuario'
+
+    if (plantToDelete) {
+      addDoc(collection(db, 'movimientos'), {
+        tipo: 'eliminar',
+        usuario: nombreUsuario,
+        descripcion: `Eliminó el producto "${plantToDelete.name}" (${plantToDelete.category})`,
+        fecha: serverTimestamp(),
+      }).catch((error) => {
+        console.warn('No se pudo registrar movimiento de eliminación:', error)
+      })
+    }
 
     deleteDoc(doc(db, 'products', idToDelete)).catch((error) => {
       console.error('Delete background error:', error)
@@ -213,6 +283,7 @@ function App() {
       (acc, curr) => acc + Number(curr.price || 0) * (curr.stock || 1),
       0
     )
+
     const date = new Date().toLocaleString('es-MX', {
       year: 'numeric',
       month: '2-digit',
@@ -220,6 +291,7 @@ function App() {
       hour: '2-digit',
       minute: '2-digit',
     })
+
     const formatMoney = (amount: number) =>
       new Intl.NumberFormat('es-MX', {
         style: 'currency',
@@ -289,7 +361,6 @@ function App() {
     })
   }, [plants, searchTerm, selectedCategory])
 
-  // ORDENAR (aplicado sobre lo filtrado)
   const sortedPlants = useMemo(() => {
     const arr = [...filteredPlants]
     arr.sort((a, b) => {
@@ -314,6 +385,14 @@ function App() {
     return arr
   }, [filteredPlants, sortBy])
 
+  const sortedUsers = useMemo(() => {
+    return [...usersList].sort((a, b) => {
+      const nameA = (a.username || a.email || '').toLowerCase()
+      const nameB = (b.username || b.email || '').toLowerCase()
+      return nameA.localeCompare(nameB)
+    })
+  }, [usersList])
+
   const toggleStockSort = () => {
     setSortBy((prev) => (prev === 'stockAsc' ? 'stockDesc' : 'stockAsc'))
   }
@@ -322,11 +401,8 @@ function App() {
     setSortBy((prev) => (prev === 'priceAsc' ? 'priceDesc' : 'priceAsc'))
   }
 
-  const stockSortIndicator =
-    sortBy === 'stockAsc' ? '▲' : sortBy === 'stockDesc' ? '▼' : '↕'
-
-  const priceSortIndicator =
-    sortBy === 'priceAsc' ? '▲' : sortBy === 'priceDesc' ? '▼' : '↕'
+const stockSortIndicator = sortBy === 'stockAsc' ? '▲' : sortBy === 'stockDesc' ? '▼' : '↕'
+const priceSortIndicator = sortBy === 'priceAsc' ? '▲' : sortBy === 'priceDesc' ? '▼' : '↕'
 
   if (authLoading || checkingRole) {
     return (
@@ -345,285 +421,505 @@ function App() {
 
   return (
     <div className="flex h-screen bg-gray-50 font-sans text-gray-900 relative">
-      {/* Sidebar */}
-      <Sidebar onReport={handlePrintReport} isOnline={isOnline} />
+      <Sidebar
+        onReport={handlePrintReport}
+        isOnline={isOnline}
+        userName={userName}
+        activeView={activeView}
+        onNavigate={setActiveView}
+      />
 
       <main className="flex-1 overflow-y-auto bg-gray-50/50">
-        <div className="p-10 max-w-[1600px] mx-auto">
-          <div className="flex justify-between items-end mb-12">
-            <div>
-              <h2 className="text-4xl font-extrabold text-gray-800">
-                Gestión de Inventario
-              </h2>
-              <div className="flex items-center gap-2 mt-2">
-                <p className="text-gray-500">
-                  Hola,{' '}
-                  <span className="text-green-700 font-bold capitalize">
-                    {userName}
-                  </span>
+        {activeView === 'inventario' && (
+          <div className="p-10 max-w-[1600px] mx-auto">
+            <div className="flex justify-between items-end mb-12">
+              <div>
+                <h2 className="text-4xl font-extrabold text-gray-800">
+                  Gestión de Inventario
+                </h2>
+                <div className="flex items-center gap-2 mt-2">
+                  <p className="text-gray-500">
+                    Hola,{' '}
+                    <span className="text-green-700 font-bold capitalize">
+                      {userName}
+                    </span>
+                  </p>
+                  {!isOnline && (
+                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full border border-orange-200 font-bold animate-pulse">
+                      Modo Offline
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <button
+                onClick={handleOpenCreate}
+                className="bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-2xl font-bold flex gap-2 shadow-lg hover:-translate-y-1 transition-all"
+              >
+                <span>+</span> Nuevo Producto
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-8 mb-12">
+              <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-100">
+                <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
+                  TOTAL EN CATÁLOGO
                 </p>
+                <div className="flex items-baseline gap-2">
+                  <p className="text-6xl font-black text-gray-900">
+                    {plants.length}
+                  </p>
+                  <span className="text-gray-400 text-lg font-medium">
+                    plantas
+                  </span>
+                </div>
+              </div>
+
+              <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-100">
+                <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
+                  VALOR ESTIMADO
+                </p>
+                <p className="text-6xl font-black text-green-500 tracking-tight">
+                  {new Intl.NumberFormat('es-MX', {
+                    style: 'currency',
+                    currency: 'MXN',
+                    maximumFractionDigits: 0,
+                  }).format(
+                    filteredPlants.reduce(
+                      (acc, curr) =>
+                        acc + Number(curr.price || 0) * (curr.stock || 1),
+                      0
+                    )
+                  )}
+                </p>
+              </div>
+
+              <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-100 transition-colors duration-500">
+                <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
+                  ESTADO DEL SISTEMA
+                </p>
+                <div className="flex items-center gap-2 mt-2">
+                  {isOnline ? (
+                    <span className="px-5 py-2 bg-green-100 text-green-800 rounded-full font-bold text-sm flex items-center gap-2 transition-all">
+                      <span className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></span>
+                      Online
+                    </span>
+                  ) : (
+                    <span className="px-5 py-2 bg-gray-100 text-gray-600 rounded-full font-bold text-sm flex items-center gap-2 border border-gray-300 transition-all">
+                      <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
+                      Modo Offline
+                    </span>
+                  )}
+                </div>
                 {!isOnline && (
-                  <span className="text-xs bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full border border-orange-200 font-bold animate-pulse">
-                    Modo Offline
-                  </span>
+                  <p className="text-xs text-orange-500 mt-2 font-medium">
+                    Cambios guardados localmente.
+                  </p>
                 )}
               </div>
             </div>
 
-            <button
-              onClick={handleOpenCreate}
-              className="bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-2xl font-bold flex gap-2 shadow-lg hover:-translate-y-1 transition-all"
-            >
-              <span>+</span> Nuevo Producto
-            </button>
-          </div>
+            <div className="flex gap-4 mb-6">
+              <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-2 flex items-center gap-3 px-4">
+                <svg
+                  className="w-5 h-5 text-gray-400"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  ></path>
+                </svg>
+                <input
+                  type="text"
+                  placeholder="Buscar producto..."
+                  className="flex-1 bg-transparent outline-none text-gray-700 font-medium"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
 
-          <div className="grid grid-cols-3 gap-8 mb-12">
-            <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-100">
-              <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
-                TOTAL EN CATÁLOGO
-              </p>
-              <div className="flex items-baseline gap-2">
-                <p className="text-6xl font-black text-gray-900">
-                  {plants.length}
-                </p>
-                <span className="text-gray-400 text-lg font-medium">
-                  plantas
-                </span>
+              <div className="relative group">
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="appearance-none bg-white border border-gray-200 text-gray-700 py-3 pl-4 pr-10 rounded-2xl font-bold cursor-pointer h-full outline-none focus:border-green-500"
+                >
+                  {categories.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-100">
-              <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
-                VALOR ESTIMADO
-              </p>
-              <p className="text-6xl font-black text-green-500 tracking-tight">
-                {new Intl.NumberFormat('es-MX', {
-                  style: 'currency',
-                  currency: 'MXN',
-                  maximumFractionDigits: 0,
-                }).format(
-                  filteredPlants.reduce(
-                    (acc, curr) =>
-                      acc + Number(curr.price || 0) * (curr.stock || 1),
-                    0
-                  )
-                )}
-              </p>
-            </div>
+            <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-gray-50/80 border-b border-gray-100">
+                  <tr>
+                    <th className="p-8 pl-10 text-gray-400 font-bold text-xs uppercase tracking-wider">
+                      Producto
+                    </th>
+                    <th className="p-8 text-gray-400 font-bold text-xs uppercase tracking-wider">
+                      Categoría
+                    </th>
 
-            <div className="bg-white p-8 rounded-[2rem] shadow-sm border border-gray-100 transition-colors duration-500">
-              <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-4">
-                ESTADO DEL SISTEMA
-              </p>
-              <div className="flex items-center gap-2 mt-2">
-                {isOnline ? (
-                  <span className="px-5 py-2 bg-green-100 text-green-800 rounded-full font-bold text-sm flex items-center gap-2 transition-all">
-                    <span className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></span>
-                    Online
-                  </span>
-                ) : (
-                  <span className="px-5 py-2 bg-gray-100 text-gray-600 rounded-full font-bold text-sm flex items-center gap-2 border border-gray-300 transition-all">
-                    <span className="w-2 h-2 bg-gray-400 rounded-full"></span>
-                    Modo Offline
-                  </span>
-                )}
-              </div>
-              {!isOnline && (
-                <p className="text-xs text-orange-500 mt-2 font-medium">
-                  Cambios guardados localmente.
-                </p>
+                    <th className="p-8 text-gray-400 font-bold text-xs uppercase tracking-wider text-center">
+                      <div className="inline-flex items-center gap-2">
+                        <span>Stock</span>
+                        <button
+                          type="button"
+                          onClick={toggleStockSort}
+                          className="text-gray-400 hover:text-gray-700 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold"
+                          title="Ordenar por stock"
+                        >
+                          {stockSortIndicator}
+                        </button>
+                      </div>
+                    </th>
+
+                    <th className="p-8 text-gray-400 font-bold text-xs uppercase tracking-wider">
+                      <div className="inline-flex items-center gap-2">
+                        <span>Precio</span>
+                        <button
+                          type="button"
+                          onClick={togglePriceSort}
+                          className="text-gray-400 hover:text-gray-700 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold"
+                          title="Ordenar por precio"
+                        >
+                          {priceSortIndicator}
+                        </button>
+                      </div>
+                    </th>
+
+                    <th className="p-8 pr-10 text-right text-gray-400 font-bold text-xs uppercase tracking-wider">
+                      Acciones
+                    </th>
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-gray-50">
+                  {sortedPlants.map((plant) => (
+                    <tr
+                      key={plant.id}
+                      className="hover:bg-green-50 transition-colors"
+                    >
+                      <td className="p-6 pl-10">
+                        <div>
+                          <p className="font-bold text-gray-900 text-lg">
+                            {plant.name}
+                          </p>
+                          <p className="text-xs text-gray-400 uppercase">
+                            ID: {plant.id.slice(0, 4)}
+                          </p>
+                        </div>
+                      </td>
+
+                      <td className="p-6">
+                        <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold uppercase">
+                          {plant.category}
+                        </span>
+                      </td>
+
+                      <td className="p-6 text-center">
+                        {(plant.stock || 0) === 0 ? (
+                          <span className="px-3 py-1 bg-red-100 text-red-600 rounded-lg text-xs font-extrabold">
+                            AGOTADO
+                          </span>
+                        ) : (
+                          <span
+                            className={`px-3 py-1 rounded-full font-bold text-sm ${
+                              (plant.stock || 0) < 5
+                                ? 'bg-yellow-100 text-yellow-700'
+                                : 'bg-green-100 text-green-700'
+                            }`}
+                          >
+                            {plant.stock} u.
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="p-6 font-bold text-lg text-gray-700">
+                        {new Intl.NumberFormat('es-MX', {
+                          style: 'currency',
+                          currency: 'MXN',
+                        }).format(plant.price)}
+                      </td>
+
+                      <td className="p-6 pr-10 text-right">
+                        <button
+                          onClick={() => handleEdit(plant)}
+                          className="p-2 text-gray-400 hover:text-blue-600"
+                          title="Editar"
+                        >
+                          <svg
+                            className="w-5 h-5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2"
+                              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                            ></path>
+                          </svg>
+                        </button>
+
+                        <button
+                          onClick={() => confirmDelete(plant.id)}
+                          className="p-2 text-gray-400 hover:text-red-600"
+                          title="Eliminar"
+                        >
+                          <svg
+                            className="w-5 h-5"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2"
+                              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                            ></path>
+                          </svg>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {!loading && sortedPlants.length === 0 && (
+                <div className="p-20 text-center text-gray-400">
+                  Sin productos aún.
+                </div>
               )}
             </div>
           </div>
+        )}
 
-          <div className="flex gap-4 mb-6">
-            <div className="flex-1 bg-white rounded-2xl shadow-sm border border-gray-200 p-2 flex items-center gap-3 px-4">
-              <svg
-                className="w-5 h-5 text-gray-400"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-                ></path>
-              </svg>
-              <input
-                type="text"
-                placeholder="Buscar producto..."
-                className="flex-1 bg-transparent outline-none text-gray-700 font-medium"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+        {activeView === 'movimientos' && (
+          <div className="p-10 max-w-[1200px] mx-auto">
+            <div className="mb-10">
+              <h2 className="text-4xl font-extrabold text-gray-800">
+                Movimientos
+              </h2>
+              <p className="text-gray-500 mt-2">
+                Aquí vas a ver el historial de acciones realizadas en el sistema.
+              </p>
             </div>
 
-            <div className="relative group">
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="appearance-none bg-white border border-gray-200 text-gray-700 py-3 pl-4 pr-10 rounded-2xl font-bold cursor-pointer h-full outline-none focus:border-green-500"
-              >
-                {categories.map((cat) => (
-                  <option key={cat} value={cat}>
-                    {cat}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <MovimientosPanel />
           </div>
+        )}
 
-          <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 overflow-hidden">
-            <table className="w-full text-left">
-              <thead className="bg-gray-50/80 border-b border-gray-100">
-                <tr>
-                  <th className="p-8 pl-10 text-gray-400 font-bold text-xs uppercase tracking-wider">
-                    Producto
-                  </th>
-                  <th className="p-8 text-gray-400 font-bold text-xs uppercase tracking-wider">
-                    Categoría
-                  </th>
-
-                  {/* STOCK con orden */}
-                  <th className="p-8 text-gray-400 font-bold text-xs uppercase tracking-wider text-center">
-                    <div className="inline-flex items-center gap-2">
-                      <span>Stock</span>
-                      <button
-                        type="button"
-                        onClick={toggleStockSort}
-                        className="text-gray-400 hover:text-gray-700 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold"
-                        title="Ordenar por stock"
-                      >
-                        {stockSortIndicator}
-                      </button>
-                    </div>
-                  </th>
-
-                  {/* PRECIO con orden */}
-                  <th className="p-8 text-gray-400 font-bold text-xs uppercase tracking-wider">
-                    <div className="inline-flex items-center gap-2">
-                      <span>Precio</span>
-                      <button
-                        type="button"
-                        onClick={togglePriceSort}
-                        className="text-gray-400 hover:text-gray-700 bg-white border border-gray-200 rounded-lg px-2 py-1 text-xs font-bold"
-                        title="Ordenar por precio"
-                      >
-                        {priceSortIndicator}
-                      </button>
-                    </div>
-                  </th>
-
-                  <th className="p-8 pr-10 text-right text-gray-400 font-bold text-xs uppercase tracking-wider">
-                    Acciones
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody className="divide-y divide-gray-50">
-                {sortedPlants.map((plant) => (
-                  <tr
-                    key={plant.id}
-                    className="hover:bg-green-50 transition-colors"
-                  >
-                    <td className="p-6 pl-10">
-                      <div>
-                        <p className="font-bold text-gray-900 text-lg">
-                          {plant.name}
-                        </p>
-                        <p className="text-xs text-gray-400 uppercase">
-                          ID: {plant.id.slice(0, 4)}
-                        </p>
-                      </div>
-                    </td>
-
-                    <td className="p-6">
-                      <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs font-bold uppercase">
-                        {plant.category}
-                      </span>
-                    </td>
-
-                    <td className="p-6 text-center">
-                      {(plant.stock || 0) === 0 ? (
-                        <span className="px-3 py-1 bg-red-100 text-red-600 rounded-lg text-xs font-extrabold">
-                          AGOTADO
-                        </span>
-                      ) : (
-                        <span
-                          className={`px-3 py-1 rounded-full font-bold text-sm ${
-                            (plant.stock || 0) < 5
-                              ? 'bg-yellow-100 text-yellow-700'
-                              : 'bg-green-100 text-green-700'
-                          }`}
-                        >
-                          {plant.stock} u.
-                        </span>
-                      )}
-                    </td>
-
-                    <td className="p-6 font-bold text-lg text-gray-700">
-                      {new Intl.NumberFormat('es-MX', {
-                        style: 'currency',
-                        currency: 'MXN',
-                      }).format(plant.price)}
-                    </td>
-
-                    <td className="p-6 pr-10 text-right">
-                      <button
-                        onClick={() => handleEdit(plant)}
-                        className="p-2 text-gray-400 hover:text-blue-600"
-                        title="Editar"
-                      >
-                        <svg
-                          className="w-5 h-5"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth="2"
-                            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                          ></path>
-                        </svg>
-                      </button>
-
-                      <button
-                        onClick={() => confirmDelete(plant.id)}
-                        className="p-2 text-gray-400 hover:text-red-600"
-                        title="Eliminar"
-                      >
-                        <svg
-                          className="w-5 h-5"
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth="2"
-                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                          ></path>
-                        </svg>
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-
-            {!loading && sortedPlants.length === 0 && (
-              <div className="p-20 text-center text-gray-400">
-                Sin productos aún.
+        {activeView === 'reporte' && (
+          <div className="p-10 max-w-[1200px] mx-auto">
+            <div className="mb-10 flex items-end justify-between">
+              <div>
+                <h2 className="text-4xl font-extrabold text-gray-800">
+                  Reporte
+                </h2>
+                <p className="text-gray-500 mt-2">
+                  Genera un reporte imprimible del inventario actual.
+                </p>
               </div>
-            )}
+
+              <button
+                onClick={handlePrintReport}
+                className="bg-green-600 hover:bg-green-700 text-white px-8 py-4 rounded-2xl font-bold shadow-lg hover:-translate-y-1 transition-all"
+              >
+                Generar reporte
+              </button>
+            </div>
+
+            <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 p-12">
+              <p className="text-gray-700 font-bold text-lg mb-2">
+                Resumen rápido
+              </p>
+              <p className="text-gray-500 mb-6">
+                Total de productos: {plants.length}
+              </p>
+
+              <div className="grid grid-cols-2 gap-6">
+                <div className="bg-gray-50 rounded-2xl p-6">
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-2">
+                    Valor estimado
+                  </p>
+                  <p className="text-3xl font-black text-green-600">
+                    {new Intl.NumberFormat('es-MX', {
+                      style: 'currency',
+                      currency: 'MXN',
+                      maximumFractionDigits: 0,
+                    }).format(
+                      plants.reduce(
+                        (acc, curr) =>
+                          acc + Number(curr.price || 0) * (curr.stock || 1),
+                        0
+                      )
+                    )}
+                  </p>
+                </div>
+
+                <div className="bg-gray-50 rounded-2xl p-6">
+                  <p className="text-xs text-gray-400 font-bold uppercase tracking-widest mb-2">
+                    Fecha
+                  </p>
+                  <p className="text-2xl font-bold text-gray-800">
+                    {new Date().toLocaleDateString('es-MX')}
+                  </p>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
+
+        {activeView === 'usuarios' && (
+          <div className="p-10 max-w-[1200px] mx-auto">
+            <div className="mb-10 flex items-end justify-between">
+              <div>
+                <h2 className="text-4xl font-extrabold text-gray-800">
+                  Usuarios
+                </h2>
+                <p className="text-gray-500 mt-2">
+                  Aquí vas a poder ver la lista real de usuarios del sistema.
+                </p>
+              </div>
+
+              <button
+                onClick={fetchUsers}
+                className="bg-white border border-gray-200 hover:border-green-500 text-gray-700 px-6 py-3 rounded-2xl font-bold shadow-sm transition-all"
+              >
+                Recargar
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-6 mb-8">
+              <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
+                <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-2">
+                  TOTAL USUARIOS
+                </p>
+                <p className="text-4xl font-black text-gray-900">
+                  {usersList.length}
+                </p>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
+                <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-2">
+                  ADMIN / CO-ADMIN
+                </p>
+                <p className="text-4xl font-black text-green-600">
+                  {
+                    usersList.filter((u) => {
+                      const role = (u.role || u.rol || '').toLowerCase()
+                      return role === 'admin' || role === 'owner'
+                    }).length
+                  }
+                </p>
+              </div>
+
+              <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
+                <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mb-2">
+                  USUARIOS ESTÁNDAR
+                </p>
+                <p className="text-4xl font-black text-blue-600">
+                  {
+                    usersList.filter((u) => {
+                      const role = (u.role || u.rol || '').toLowerCase()
+                      return role !== 'admin' && role !== 'owner'
+                    }).length
+                  }
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-[2.5rem] shadow-xl border border-gray-100 overflow-hidden">
+              {usersLoading ? (
+                <div className="p-16 text-center text-gray-400">
+                  Cargando usuarios...
+                </div>
+              ) : sortedUsers.length === 0 ? (
+                <div className="p-16 text-center text-gray-400">
+                  No hay usuarios registrados.
+                </div>
+              ) : (
+                <table className="w-full text-left">
+                  <thead className="bg-gray-50/80 border-b border-gray-100">
+                    <tr>
+                      <th className="p-8 pl-10 text-gray-400 font-bold text-xs uppercase tracking-wider">
+                        Usuario
+                      </th>
+                      <th className="p-8 text-gray-400 font-bold text-xs uppercase tracking-wider">
+                        Correo
+                      </th>
+                      <th className="p-8 text-gray-400 font-bold text-xs uppercase tracking-wider">
+                        Rol
+                      </th>
+                      <th className="p-8 pr-10 text-gray-400 font-bold text-xs uppercase tracking-wider">
+                        ID
+                      </th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-gray-50">
+                    {sortedUsers.map((item) => {
+                      const roleLabel = item.role || item.rol || 'Sin rol'
+                      const normalizedRole = roleLabel.toLowerCase()
+
+                      return (
+                        <tr
+                          key={item.id}
+                          className="hover:bg-green-50 transition-colors"
+                        >
+                          <td className="p-6 pl-10">
+                            <div>
+                              <p className="font-bold text-gray-900 text-lg">
+                                {item.username || 'Sin nombre'}
+                              </p>
+                              <p className="text-xs text-gray-400 uppercase">
+                                Usuario del sistema
+                              </p>
+                            </div>
+                          </td>
+
+                          <td className="p-6 text-gray-700 font-medium">
+                            {item.email || 'Sin correo'}
+                          </td>
+
+                          <td className="p-6">
+                            <span
+                              className={`px-3 py-1 rounded-full text-xs font-extrabold uppercase ${
+                                normalizedRole === 'owner'
+                                  ? 'bg-purple-100 text-purple-700'
+                                  : normalizedRole === 'admin'
+                                  ? 'bg-green-100 text-green-700'
+                                  : 'bg-gray-100 text-gray-600'
+                              }`}
+                            >
+                              {roleLabel}
+                            </span>
+                          </td>
+
+                          <td className="p-6 pr-10 text-xs text-gray-400 font-mono">
+                            {item.id}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
       </main>
 
       <AddProductModal

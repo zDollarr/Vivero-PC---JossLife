@@ -1,15 +1,15 @@
 {
-  "name": "vivero-pc",
-  "productName": "JossLife - Manager",
+  "name": "vivero-pc-pruebas",
+  "productName": "JossLife - Manager Pruebas",
   "private": true,
   "version": "1.0.0",
   "description": "Sistema de gestión de inventario para Vivero",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "vite build && vite",
-    "build": "tsc -b && vite build && electron-builder",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "dev": "vite",
+    "build:web": "tsc -b && vite build",
+    "build": "npm run build:web && electron-builder",
+    "build:pruebas": "npm run build:web && electron-builder --win"
   },
   "dependencies": {
     "firebase": "^11.3.1",
@@ -40,10 +40,10 @@
     "vite-plugin-electron-renderer": "^0.14.5"
   },
   "build": {
-    "appId": "com.viverojosslife.manager",
-    "productName": "ViveroJossLife Manager",
+    "appId": "com.viverojosslife.manager.pruebas",
+    "productName": "JossLife Manager Pruebas",
     "directories": {
-      "output": "release",
+      "output": "release-pruebas",
       "buildResources": "build"
     },
     "files": [
@@ -53,14 +53,15 @@
     ],
     "win": {
       "target": "nsis",
-      "artifactName": "JL Manager ${version}.${ext}",
+      "artifactName": "JL Manager Pruebas ${version}.${ext}",
       "icon": "build/Icono.ico",
       "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": true,
       "createDesktopShortcut": true,
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "uninstallDisplayName": "JossLife Manager Pruebas"
     },
     "publish": null
   }

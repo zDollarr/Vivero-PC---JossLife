@@ -8,8 +8,9 @@ import {
   where,
   getDocs,
   increment,
+  serverTimestamp,
 } from 'firebase/firestore'
-import { db } from '../firebaseConfig'
+import { db, auth } from '../firebaseConfig'
 
 interface Product {
   id?: string
@@ -37,7 +38,6 @@ const CATEGORIES = [
   'Otros',
 ]
 
-// Normaliza: trim + lowercase + colapsa espacios múltiples
 const makeNameKey = (name: string) =>
   name
     .trim()
@@ -91,11 +91,15 @@ export const AddProductModal = ({
   }, [isOpen, productToEdit])
 
   const handlePriceChange = (text: string) => {
-    if (/^\d*\.?\d*$/.test(text)) setNewPlant((prev) => ({ ...prev, price: text }))
+    if (/^\d*\.?\d*$/.test(text)) {
+      setNewPlant((prev) => ({ ...prev, price: text }))
+    }
   }
 
   const handleStockChange = (text: string) => {
-    if (/^\d*$/.test(text)) setNewPlant((prev) => ({ ...prev, stock: text }))
+    if (/^\d*$/.test(text)) {
+      setNewPlant((prev) => ({ ...prev, stock: text }))
+    }
   }
 
   const handleCloseAttempt = () => {
@@ -117,6 +121,29 @@ export const AddProductModal = ({
     else onClose()
   }
 
+  const registrarMovimiento = async (
+    tipo: 'agregar' | 'editar',
+    descripcion: string
+  ) => {
+    const currentUser = auth.currentUser
+
+    const nombreUsuario =
+      currentUser?.displayName ||
+      currentUser?.email?.split('@')[0] ||
+      'Usuario'
+
+    try {
+      await addDoc(collection(db, 'movimientos'), {
+        tipo,
+        usuario: nombreUsuario,
+        descripcion,
+        fecha: serverTimestamp(),
+      })
+    } catch (error) {
+      console.warn('No se pudo registrar el movimiento:', error)
+    }
+  }
+
   const handleSave = async () => {
     if (!newPlant.name.trim() || !newPlant.price.toString().trim()) return
 
@@ -131,26 +158,28 @@ export const AddProductModal = ({
 
     const productData: any = {
       name: namePretty,
-      nameKey, // <- CLAVE NORMALIZADA
+      nameKey,
       price: priceNumber,
       category: categoryFinal,
       stock: stockNumber,
     }
 
     const savePromise = async () => {
-      // EDITAR: actualiza el doc actual (y también guarda/actualiza nameKey)
       if (productToEdit?.id) {
         await updateDoc(doc(db, 'products', productToEdit.id), {
           ...productData,
           updatedAt: new Date(),
         })
+
+        await registrarMovimiento(
+          'editar',
+          `Editó el producto "${namePretty}" (${categoryFinal})`
+        )
         return
       }
 
-      // CREAR: buscar duplicado por (nameKey + category + price)
       const productsRef = collection(db, 'products')
 
-      // 1) Intento “nuevo”: con nameKey
       const q1 = query(
         productsRef,
         where('nameKey', '==', nameKey),
@@ -164,12 +193,15 @@ export const AddProductModal = ({
         await updateDoc(doc(db, 'products', existingDoc.id), {
           stock: increment(stockNumber),
           updatedAt: new Date(),
-          // opcional: podrías “arreglar” nameKey si antes no existía, pero aquí ya existe
         })
+
+        await registrarMovimiento(
+          'agregar',
+          `Agregó ${stockNumber} unidad(es) al producto existente "${namePretty}"`
+        )
         return
       }
 
-      // 2) Fallback “legacy”: por si tienes productos viejos sin nameKey todavía
       const q2 = query(
         productsRef,
         where('name', '==', namePretty),
@@ -182,21 +214,29 @@ export const AddProductModal = ({
         const existingDoc = snap2.docs[0]
         await updateDoc(doc(db, 'products', existingDoc.id), {
           stock: increment(stockNumber),
-          nameKey, // <- en este fallback aprovecha y lo crea
+          nameKey,
           updatedAt: new Date(),
         })
+
+        await registrarMovimiento(
+          'agregar',
+          `Agregó ${stockNumber} unidad(es) al producto existente "${namePretty}"`
+        )
         return
       }
 
-      // 3) No existe: crear nuevo
       await addDoc(productsRef, {
         ...productData,
         createdAt: new Date(),
         description: '',
       })
+
+      await registrarMovimiento(
+        'agregar',
+        `Creó el producto "${namePretty}" con ${stockNumber} unidad(es)`
+      )
     }
 
-    // Guardar en background (tu estrategia de UX/offline)
     savePromise().catch((err) =>
       console.warn('Guardado en background (posible offline):', err)
     )
